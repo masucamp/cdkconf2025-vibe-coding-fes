@@ -1,12 +1,19 @@
 #!/bin/bash
 
-# Timestream Neptune Analytics Platform Deployment Script
-# This script deploys the CDK stack and provides post-deployment testing
+# Timestream Neptune Analytics Platform Deployment Script (Refactored Version)
+# This script deploys the CDK stack with environment-specific configurations
 
 set -e
 
-echo "🚀 Timestream Neptune Analytics Platform Deployment"
-echo "=================================================="
+echo "🚀 Timestream Neptune Analytics Platform Deployment (Refactored)"
+echo "=============================================================="
+
+# Default environment
+ENVIRONMENT=${1:-development}
+ENABLE_NAG=${2:-false}
+
+echo "📍 Deployment Environment: $ENVIRONMENT"
+echo "🔍 CDK Nag Enabled: $ENABLE_NAG"
 
 # Check if AWS CLI is configured
 if ! aws sts get-caller-identity > /dev/null 2>&1; then
@@ -33,7 +40,15 @@ npm install
 # Build and synthesize
 echo "🔨 Building and synthesizing CDK..."
 npm run build
-npx cdk synth
+
+# Set CDK context for environment and nag
+CDK_CONTEXT="--context environment=$ENVIRONMENT"
+if [ "$ENABLE_NAG" = "true" ]; then
+    CDK_CONTEXT="$CDK_CONTEXT --context enableNag=true"
+fi
+
+echo "🧪 Synthesizing with context: $CDK_CONTEXT"
+npx cdk synth $CDK_CONTEXT
 
 # Bootstrap CDK (if needed)
 echo "🏗️  Bootstrapping CDK (if needed)..."
@@ -41,7 +56,7 @@ npx cdk bootstrap
 
 # Deploy the stack
 echo "🚀 Deploying stack..."
-npx cdk deploy --require-approval never
+npx cdk deploy $CDK_CONTEXT --require-approval never
 
 # Get stack outputs
 echo "📋 Getting stack outputs..."
@@ -53,11 +68,13 @@ API_URL=$(echo $STACK_OUTPUTS | jq -r '.[] | select(.OutputKey=="ApiGatewayUrl")
 TIMESTREAM_DB=$(echo $STACK_OUTPUTS | jq -r '.[] | select(.OutputKey=="TimestreamDatabaseName") | .OutputValue')
 NEPTUNE_ENDPOINT=$(echo $STACK_OUTPUTS | jq -r '.[] | select(.OutputKey=="NeptuneClusterEndpoint") | .OutputValue')
 S3_BUCKET=$(echo $STACK_OUTPUTS | jq -r '.[] | select(.OutputKey=="S3BucketName") | .OutputValue')
+DEPLOYED_ENV=$(echo $STACK_OUTPUTS | jq -r '.[] | select(.OutputKey=="Environment") | .OutputValue')
 
 echo ""
 echo "✅ Deployment completed successfully!"
 echo "=================================="
 echo "📊 Stack Outputs:"
+echo "  • Environment: $DEPLOYED_ENV"
 echo "  • Kinesis Stream: $KINESIS_STREAM"
 echo "  • API Gateway URL: $API_URL"
 echo "  • Timestream Database: $TIMESTREAM_DB"
@@ -75,8 +92,15 @@ if command -v python3 &> /dev/null; then
     echo "⏳ Waiting 30 seconds for data processing..."
     sleep 30
     
-    echo "🔍 Testing API query..."
-    curl -s "$API_URL/query?type=metrics" | jq '.' || echo "API query test completed (jq not available for formatting)"
+    echo "🔍 Testing API endpoints..."
+    echo "  • Health check:"
+    curl -s "$API_URL/query?type=health" | jq '.' || echo "Health check completed"
+    
+    echo "  • Metrics query:"
+    curl -s "$API_URL/query?type=metrics" | jq '.' || echo "Metrics query completed"
+    
+    echo "  • Aggregated query:"
+    curl -s "$API_URL/query?type=aggregated&hours=1" | jq '.' || echo "Aggregated query completed"
 else
     echo "⚠️  Python3 not found. Skipping test data sending."
     echo "   You can manually send test data using: python3 scripts/send_test_data.py --stream-name $KINESIS_STREAM"
@@ -88,10 +112,18 @@ echo "==================="
 echo ""
 echo "📝 Next Steps:"
 echo "  1. Send test data: python3 scripts/send_test_data.py --stream-name $KINESIS_STREAM"
-echo "  2. Query API: curl '$API_URL/query?type=metrics'"
+echo "  2. Query APIs:"
+echo "     • Health: curl '$API_URL/query?type=health'"
+echo "     • Metrics: curl '$API_URL/query?type=metrics'"
+echo "     • Aggregated: curl '$API_URL/query?type=aggregated&hours=24'"
 echo "  3. Monitor CloudWatch logs and metrics"
 echo "  4. Access Neptune via VPC (requires bastion host or VPN)"
 echo ""
+echo "🔧 Environment Management:"
+echo "  • Deploy to staging: ./scripts/deploy.sh staging"
+echo "  • Deploy to production: ./scripts/deploy.sh production true"
+echo "  • Enable CDK Nag: ./scripts/deploy.sh development true"
+echo ""
 echo "📚 Documentation: See ARCHITECTURE.md for detailed information"
 echo ""
-echo "🧹 To clean up resources: npx cdk destroy"
+echo "🧹 To clean up resources: npx cdk destroy $CDK_CONTEXT"

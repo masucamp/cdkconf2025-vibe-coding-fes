@@ -1,6 +1,7 @@
 # Timestream & Neptune Analytics Platform
 
 AWS Well-Architected Framework準拠のTimestreamとNeptuneを組み合わせた分析プラットフォームです。
+保守性とスケーラビリティを重視したモジュラー設計で構築されています。
 
 ## 🏗️ アーキテクチャ
 
@@ -22,28 +23,42 @@ AWS Well-Architected Framework準拠のTimestreamとNeptuneを組み合わせた
 - AWS CLI設定済み
 - Python 3.8+ (テストデータ送信用)
 
-### デプロイ
+### 環境別デプロイ
 
 ```bash
 # 依存関係のインストール
 npm install
 
-# 自動デプロイ（推奨）
+# 開発環境デプロイ（デフォルト）
 ./scripts/deploy.sh
+
+# ステージング環境デプロイ
+./scripts/deploy.sh staging
+
+# 本番環境デプロイ（CDK Nag有効）
+./scripts/deploy.sh production true
 ```
 
-または手動デプロイ：
+### 手動デプロイ
 
 ```bash
 # ビルド・構文チェック
 npm run build
-npx cdk synth
+
+# 環境指定でsynth
+npx cdk synth --context environment=development
 
 # デプロイ
-npx cdk deploy
+npx cdk deploy --context environment=production
 ```
 
 ## 🧪 テスト
+
+### 単体テスト実行
+
+```bash
+npm test
+```
 
 ### テストデータの送信
 
@@ -55,8 +70,14 @@ python3 scripts/send_test_data.py --stream-name <KINESIS_STREAM_NAME> --count 10
 ### APIクエリテスト
 
 ```bash
+# ヘルスチェック
+curl "<API_GATEWAY_URL>/query?type=health"
+
 # メトリクスクエリ
 curl "<API_GATEWAY_URL>/query?type=metrics"
+
+# 集約クエリ
+curl "<API_GATEWAY_URL>/query?type=aggregated&hours=24"
 ```
 
 ## 📊 Well-Architected Framework 準拠
@@ -80,10 +101,10 @@ curl "<API_GATEWAY_URL>/query?type=metrics"
 ### コスト最適化
 - ✅ S3ライフサイクルポリシー
 - ✅ Timestream保持期間最適化
-- ✅ コスト効率的なインスタンスタイプ
+- ✅ 環境別リソースサイジング
 
 ### 運用上の優秀性
-- ✅ CloudWatch監視・アラーム
+- ✅ CloudWatch監視・アラーム・ダッシュボード
 - ✅ 構造化ログ出力
 - ✅ 自動化されたデプロイメント
 
@@ -91,14 +112,30 @@ curl "<API_GATEWAY_URL>/query?type=metrics"
 
 ```
 ├── lib/
-│   └── timestream-neptune-stack.ts    # メインCDKスタック
+│   ├── config/
+│   │   └── stack-config.ts              # 環境別設定管理
+│   ├── constructs/
+│   │   ├── networking-construct.ts      # VPC・ネットワーキング
+│   │   ├── data-storage-construct.ts    # Timestream・Neptune・S3
+│   │   ├── data-processing-construct.ts # Kinesis・Lambda処理
+│   │   ├── api-gateway-construct.ts     # API Gateway・クエリLambda
+│   │   └── monitoring-construct.ts      # CloudWatch・アラーム
+│   ├── lambda/
+│   │   ├── data-processor/              # データ処理Lambda
+│   │   └── query-function/              # クエリLambda
+│   ├── utils/
+│   │   └── nag-suppressions.ts         # CDK Nag抑制管理
+│   └── timestream-neptune-stack.ts     # メインスタック
 ├── bin/
-│   └── cdkconf2025-vibe-coding-fes.ts # CDKアプリエントリーポイント
+│   └── cdkconf2025-vibe-coding-fes.ts  # CDKアプリエントリーポイント
 ├── scripts/
-│   ├── deploy.sh                      # 自動デプロイスクリプト
-│   └── send_test_data.py             # テストデータ送信
-├── ARCHITECTURE.md                    # 詳細アーキテクチャドキュメント
-└── README.md                         # このファイル
+│   ├── deploy.sh                        # 環境別デプロイスクリプト
+│   └── send_test_data.py               # テストデータ送信
+├── test/
+│   └── timestream-neptune-stack.test.ts # 包括的テストスイート
+├── generated-diagrams/                  # アーキテクチャ図
+├── ARCHITECTURE.md                      # 詳細アーキテクチャドキュメント
+└── README.md                           # このファイル
 ```
 
 ## 🔧 主要コマンド
@@ -113,28 +150,59 @@ npm run watch
 # テスト実行
 npm run test
 
-# CDK合成（CloudFormationテンプレート生成）
-npx cdk synth
+# 環境別CDK合成
+npx cdk synth --context environment=development
+npx cdk synth --context environment=production
 
-# デプロイ
-npx cdk deploy
+# 環境別デプロイ
+npx cdk deploy --context environment=staging
 
 # スタック削除
-npx cdk destroy
+npx cdk destroy --context environment=development
 ```
+
+## 🌍 環境管理
+
+### 開発環境 (development)
+- コスト最適化: 小さなインスタンス、少ないシャード数
+- CDK Nag: デフォルト無効（高速開発）
+- リソース: t3.small Neptune、1 Kinesis シャード
+
+### ステージング環境 (staging)
+- 本番類似構成: 中程度のリソース
+- CDK Nag: 有効
+- バックアップ: 3日間保持
+
+### 本番環境 (production)
+- 高可用性: 大きなインスタンス、複数シャード
+- CDK Nag: 必須
+- リソース: r5.large Neptune、4 Kinesis シャード
 
 ## 💰 コスト見積もり
 
-月額概算（us-east-1リージョン）：
-- Neptune: $200-300
-- Timestream: $50-100
-- Lambda: $10-20
-- Kinesis: $15-30
-- その他: $20-50
+### 開発環境
+- Neptune: $100-150/月
+- その他: $50-80/月
+- **合計**: 約 $150-230/月
 
-**合計**: 約 $295-500/月
+### 本番環境
+- Neptune: $400-600/月
+- その他: $100-150/月
+- **合計**: 約 $500-750/月
 
 詳細は `ARCHITECTURE.md` を参照してください。
+
+## 🧪 テスト戦略
+
+### 単体テスト
+- 各コンストラクトの独立テスト
+- 環境別設定の検証
+- CloudFormationテンプレートの検証
+
+### 統合テスト
+- API エンドポイントテスト
+- データフローテスト
+- 監視・アラームテスト
 
 ## 📚 ドキュメント
 
@@ -149,15 +217,35 @@ npx cdk destroy
 1. **デプロイエラー**: AWS認証情報を確認
 2. **Neptune接続エラー**: VPC・セキュリティグループ設定確認
 3. **Lambda タイムアウト**: VPC設定・NAT Gateway確認
+4. **環境設定エラー**: `--context environment=<env>` の指定確認
 
 詳細は `ARCHITECTURE.md` のトラブルシューティングセクションを参照。
+
+## 🔄 アーキテクチャの特徴
+
+### 保守性の向上
+- ✅ モジュラー設計: 機能別コンストラクト分離
+- ✅ 設定外部化: 環境別設定ファイル
+- ✅ コード分離: Lambda関数の外部ファイル化
+- ✅ 型安全性: TypeScript型定義の強化
+
+### スケーラビリティの向上
+- ✅ 環境別リソースサイジング
+- ✅ 設定駆動デプロイメント
+- ✅ 再利用可能コンポーネント
+
+### 運用性の向上
+- ✅ 包括的テストスイート
+- ✅ CDK Nag抑制の一元管理
+- ✅ 環境別デプロイメント戦略
 
 ## 🤝 コントリビューション
 
 1. フォークしてブランチ作成
 2. 変更を実装
-3. CDK Nagチェック通過確認
-4. プルリクエスト作成
+3. テスト実行: `npm test`
+4. CDK Nagチェック通過確認
+5. プルリクエスト作成
 
 ## 📄 ライセンス
 
